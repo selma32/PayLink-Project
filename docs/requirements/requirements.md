@@ -104,7 +104,7 @@
 **And** a TOPUP ledger entry is created for that amount (FR-5)\
 **And** an audit log entry records who, when and why (FR-25)
 
-> Scenario 2: **Top-up by agent cash**\ 
+> Scenario 2: **Top-up by agent cash**\
 **Given** an agent and a registered customer who hands the agent cash\
 **When** the agent submits a top-up for that customer's wallet\
 **Then** the amount is added to the customer's available balance\
@@ -172,7 +172,7 @@
 
 > Scenario 1: **Add a biller**\
 **Given** an admin and a new biller that does not exist in the catalog\
-**When** the admin submits the biller's name and integration type/
+**When** the admin submits the biller's name and integration type\
 **Then** the biller is created as active\
 **And** an audit log entry records who, when and why (FR-25)
 
