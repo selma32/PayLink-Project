@@ -79,13 +79,13 @@
 **Then** the entries are returned newest first\
 **And** each entry shows its date and time, type, amount, resulting payment reference (if any) and status
 
-> Scenario 4: Empty history\
+> Scenario 4: **Empty history**\
 **Given** a newly registered customer with no ledger entries\
 **When** they request their balance and history\
 **Then** both balances are 0.00 EGP\
 **And** the history is an empty list, not an error
 
-> Scenario 5: Access restricted to the owner\
+> Scenario 5: **Access restricted to the owner**\
 **Given** two customers, A and B\
 **When** customer A requests the wallet or history of customer B\
 **Then** the request is refused as forbidden\
