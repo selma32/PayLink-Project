@@ -1,13 +1,20 @@
 # Prompt.log
 
-**prompt 1**
-Timestamp:
+**1**
+Date:
+Author:
+Stage:
+Tool and model:
 Prompt:
-Answer:
-Edit/s:
+Summary of answer:
+Verdict & why:
 
-**prompt 2**
-Timestamp:
+
+**2**
+Date:
+Author:
+Stage:
+Tool and model:
 Prompt:
-Answer:
-Edit/s:
+Summary of answer:
+Verdict & why:
