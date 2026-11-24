@@ -23,3 +23,26 @@ I found "As a basic customer, I want to be upgraded to VERIFIED ..." to make the
 also adding another scenario: already VERIFIED)
 
 
+## 3
+Date: 24-Nov-2026
+Author: Salma Fathy
+Stage: requirements
+Tool and model: ChatGPT-GPT-6
+Prompt: Create user stories for FR-13. Constraints: Follow the timeout rules in the brief.
+Summary of answer: cover re-query attempts and unresolved payments, and avoid inventing retry behavior.	Generated scenarios with retry intervals and automatic refunds 
+Verdict & why: Rejected: The output assumed that if a payment is unresolved it should be refunded automatically, while in this case the conflict should be resolved through reconiliation
+
+
+## 4
+Date: 24-Nov-2026
+Author: Salma Fathy
+Stage: requirements
+Tool and model: ChatGPT-GPT-6
+Prompt: Create user stories for FR-14.
+Summary of answer: generated callback scenarios but did not cover a failed callback arriving after a completed payment 
+Verdict & why: fixed: added a conflicting callback scenario to ensure completed payment remains unchanged and the conflict is logged.
+
+
+
+
+
