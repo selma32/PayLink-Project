@@ -37,7 +37,7 @@ and no new account or wallet is created.
 
 ### Questions or ambiguities
 > What identifies a customer (phone number, email, or both)?
-- Phone number is assumed as the unique identifier.
+Phone number is assumed as the unique identifier.
 > Is phone verification by OTP required, or simulated? 
 
 
