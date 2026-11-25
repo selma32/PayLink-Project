@@ -1,0 +1,336 @@
+%% PayLink - final3 ER diagram (21 tables)
+%% Base: er2 (compact). Added from er1: fee_tiers, commissions, payment_inputs, typed settings.
+%% Conventions:
+%%  - All money columns are decimal(12,2) (exact decimal, never float).
+%%  - NO balance column anywhere: balances = SUM(ledger_entries.amount) per wallet and bucket (FR-5).
+%%  - created_by / reviewed_by / updated_by columns are FKs to users.id (not all drawn, for readability).
+%%  - ledger_entries, payment_status_history, biller_interactions and audit_logs are append-only.
+%%  - A payments row is created as INITIATED first, so rejected payments are also recorded.
+%%    The velocity rule counts payments created by one customer in the last 60 seconds.
+%%  - Ledger: transaction_id groups ALL entries of one money movement (2 for a hold, 3 for a charge:
+%%    customer HELD, BILLER_PAYABLE, FEE_INCOME). They are written in one DB transaction and
+%%    SUM(amount) = 0 per transaction_id. EXTERNAL_FUNDING is the counter-entry of every top-up.
+%%    One audit_logs row per transaction_id (entity_type LEDGER_TRANSACTION), not per entry.
+%%  - Concurrency: a hold locks the wallet row by bumping wallets.version (concurrency token).
+%%    Payment status changes use a conditional UPDATE ... WHERE status = expected state
+%%    (check rows affected = 1), so a duplicate callback cannot complete a payment twice.
+%%  - Constraints to create in migrations (Mermaid cannot draw composite or filtered keys):
+%%      payments:   UNIQUE (customer_id, idempotency_key); idempotency_key, request_hash NOT NULL
+%%      topups:     UNIQUE (wallet_id, idempotency_key); idempotency_key, request_hash NOT NULL
+%%      wallets:    UNIQUE (user_id, wallet_type) WHERE user_id IS NOT NULL
+%%                  UNIQUE (biller_id) WHERE biller_id IS NOT NULL
+%%                  UNIQUE (wallet_type) WHERE user_id IS NULL AND biller_id IS NULL
+%%                  CHECK: CUSTOMER/AGENT need user_id; BILLER_PAYABLE needs biller_id; others neither
+%%      ledger_entries: UNIQUE (payment_id, entry_type, wallet_id, bucket)
+%%                  WHERE entry_type IN (HOLD, CHARGE, RELEASE, FEE, COMMISSION)  -- no double charge
+%%      settlement_files:   UNIQUE (biller_id, settlement_date)
+%%      settlement_entries: UNIQUE (settlement_file_id, payment_reference)
+%%      reconciliation_differences: UNIQUE (settlement_file_id, payment_id) WHERE payment_id IS NOT NULL
+%%                  UNIQUE (settlement_file_id, settlement_entry_id) WHERE settlement_entry_id IS NOT NULL
+%%  - Reconciliation runs once per file: UPDATE settlement_files SET reconciled_at = now()
+%%    WHERE id = ? AND reconciled_at IS NULL (rows affected = 1), otherwise skip.
+%%  - fee_rules is per biller (one rule set, one promotion). Add a nullable service_id later if a
+%%    biller ever needs different fees per service.
+
+erDiagram
+
+    %% ---------- Accounts and Wallet ----------
+    users {
+        uuid id PK
+        string name
+        string phone UK "unique identifier"
+        string password_hash
+        string role "CUSTOMER, AGENT, ADMIN, SUPPORT"
+        string verification_level "BASIC, VERIFIED"
+        string status "ACTIVE, BLOCKED"
+        timestamp blocked_until "set by velocity rule (10 min)"
+        timestamp created_at
+    }
+
+    verification_requests {
+        uuid id PK
+        uuid user_id FK
+        string status "PENDING, APPROVED, REJECTED"
+        uuid reviewed_by FK "admin"
+        string reason
+        timestamp requested_at
+        timestamp reviewed_at
+    }
+
+    wallets {
+        uuid id PK
+        uuid user_id FK "CUSTOMER and AGENT wallets only"
+        uuid biller_id FK "BILLER_PAYABLE wallets only, one per biller"
+        string wallet_type "CUSTOMER, AGENT, FEE_INCOME, BILLER_PAYABLE, EXTERNAL_FUNDING"
+        string currency "EGP"
+        int version "bumped on every hold, serializes concurrent holds"
+        timestamp created_at
+    }
+
+    ledger_entries {
+        bigint id PK
+        uuid transaction_id "groups all entries of one money movement, sum = 0"
+        uuid wallet_id FK
+        string entry_type "TOPUP, HOLD, CHARGE, RELEASE, REFUND, FEE, COMMISSION, REVERSAL"
+        string bucket "AVAILABLE, HELD"
+        decimal amount "signed: + credit, - debit"
+        uuid payment_id FK "nullable"
+        uuid topup_id FK "nullable"
+        uuid refund_request_id FK "nullable"
+        bigint reverses_entry_id FK "nullable, corrections are new entries"
+        uuid created_by FK "null = done by a system job"
+        string description
+        timestamp created_at
+    }
+
+    topups {
+        uuid id PK
+        uuid wallet_id FK
+        string source_type "SIMULATED_CARD, AGENT_CASH"
+        uuid agent_id FK "null for card"
+        decimal amount "min 10 EGP"
+        string status "SUCCESS, DECLINED"
+        string decline_reason
+        string idempotency_key
+        string request_hash
+        timestamp created_at
+    }
+
+    %% ---------- Biller Catalog ----------
+    billers {
+        uuid id PK
+        string code UK "ELECTROCO, AQUACO, TOPUPNET, NETCO"
+        string name
+        string category "ELECTRICITY, WATER, MOBILE, INTERNET"
+        string integration_type "REST_JSON, SOAP_XML, ASYNC_REST, BATCH_CSV"
+        string base_url
+        int timeout_seconds "10 for live billers"
+        boolean is_active
+        timestamp created_at
+    }
+
+    biller_services {
+        uuid id PK
+        uuid biller_id FK
+        string name
+        decimal min_amount "inside global 5 - 10,000"
+        decimal max_amount
+        boolean is_active
+        timestamp created_at
+    }
+
+    service_input_fields {
+        uuid id PK
+        uuid service_id FK
+        string name "meter_number, phone_number, ..."
+        string field_type "STRING, NUMBER, PHONE"
+        boolean is_required
+        int display_order
+    }
+
+    %% ---------- Payment Processing ----------
+    payments {
+        uuid id PK
+        string reference UK "e.g. P-1001"
+        uuid customer_id FK
+        uuid agent_id FK "null if paid by customer"
+        uuid service_id FK
+        decimal bill_amount
+        decimal fee_amount "snapshot, later fee edits do not change it"
+        decimal total_amount "bill_amount + fee_amount"
+        string status "INITIATED, FUNDS_HELD, SENT_TO_BILLER, COMPLETED, FAILED, UNKNOWN, REJECTED, REFUNDED"
+        string failure_reason
+        string biller_payment_ref "biller own receipt id, informational only"
+        string idempotency_key "NOT NULL, new key per new customer attempt"
+        string request_hash "NOT NULL, detects same key with different parameters"
+        int requery_count "0 to 3"
+        timestamp next_requery_at "persisted so restarts keep the schedule"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    payment_inputs {
+        uuid payment_id PK, FK
+        string field_name PK "snapshot, survives later edits of the service fields"
+        string field_type "snapshot"
+        string value "meter number, phone number, ..."
+    }
+
+    payment_status_history {
+        bigint id PK
+        uuid payment_id FK
+        string from_status
+        string to_status
+        string event "e.g. BILLER_TIMEOUT, CALLBACK_SUCCESS"
+        string detail
+        timestamp created_at
+    }
+
+    commissions {
+        uuid id PK
+        uuid payment_id FK, UK "one commission per payment"
+        uuid agent_id FK
+        bigint ledger_entry_id FK "credit to agent wallet"
+        decimal rate "0.40"
+        decimal amount "40% of fee, only when COMPLETED"
+        timestamp created_at
+    }
+
+    refund_requests {
+        uuid id PK
+        uuid payment_id FK "max one PENDING or APPROVED per payment"
+        uuid customer_id FK
+        string status "PENDING, APPROVED, REJECTED"
+        string customer_reason
+        uuid reviewed_by FK "support employee"
+        string review_reason
+        timestamp requested_at
+        timestamp reviewed_at
+    }
+
+    %% ---------- Biller Integration ----------
+    biller_interactions {
+        bigint id PK
+        uuid biller_id FK
+        uuid payment_id FK "nullable, e.g. unknown reference"
+        string payment_reference "kept even if payment not found"
+        string interaction_type "INQUIRY, PAYMENT, REQUERY, CALLBACK"
+        string outcome "SUCCESS, REFUSED, TIMEOUT, DUPLICATE, CONFLICT, EARLY, NOT_FOUND"
+        text request_payload
+        text response_payload
+        int duration_ms
+        timestamp created_at
+    }
+
+    %% ---------- Fees and Configuration ----------
+    fee_rules {
+        uuid id PK
+        uuid biller_id FK, UK "one rule set per biller"
+        string fee_type "FIXED, PERCENTAGE, TIERED"
+        decimal fixed_amount "2.50 electricity and water"
+        decimal percentage "0.015 mobile top-up"
+        decimal min_fee "1.00 mobile top-up"
+        decimal commission_rate "0.40"
+        date promo_start_date "fee = 0 inside the period"
+        date promo_end_date
+        uuid updated_by FK
+        timestamp updated_at
+    }
+
+    fee_tiers {
+        uuid id PK
+        uuid fee_rule_id FK
+        decimal up_to_amount "200.00, null = above"
+        decimal fee_amount "2.00 / 4.00"
+    }
+
+    system_settings {
+        string setting_key PK "daily_limit_BASIC, daily_limit_VERIFIED, daily_topup_limit, min_payment, max_payment, min_topup, velocity_max, velocity_window_sec, block_minutes, notification_retries"
+        string setting_value
+        string value_type "DECIMAL, INT, STRING"
+        string description
+        uuid updated_by FK
+        timestamp updated_at
+    }
+
+    %% ---------- Notifications ----------
+    notifications {
+        uuid id PK
+        uuid user_id FK
+        uuid payment_id FK "nullable"
+        string template_code "PAYMENT_COMPLETED, PAYMENT_FAILED, PAYMENT_PROCESSING"
+        string channel "SMS, EMAIL, PUSH"
+        text content
+        string status "PENDING, DELIVERED, UNDELIVERED"
+        int attempt_count "1 first send + max 3 retries"
+        string last_error
+        timestamp created_at
+        timestamp delivered_at
+    }
+
+    %% ---------- Reconciliation ----------
+    settlement_files {
+        uuid id PK
+        uuid biller_id FK
+        date settlement_date "one file and one report per biller per day"
+        string file_name
+        timestamp uploaded_at
+        timestamp reconciled_at "null until the nightly run"
+        int matched_count
+        int difference_count
+    }
+
+    settlement_entries {
+        uuid id PK
+        uuid settlement_file_id FK
+        string payment_reference "the reference PayLink sent, matched to payments.reference"
+        decimal amount
+        timestamp paid_at
+    }
+
+    reconciliation_differences {
+        uuid id PK
+        uuid settlement_file_id FK
+        uuid payment_id FK "null if entry unknown to PayLink"
+        uuid settlement_entry_id FK "null if missing from file"
+        string difference_type "FAILED_BUT_SETTLED, COMPLETED_NOT_IN_FILE, UNKNOWN_ENTRY, AMOUNT_MISMATCH"
+        string review_status "OPEN, REVIEWED"
+        uuid reviewed_by FK
+        string note
+    }
+
+    %% ---------- Audit ----------
+    audit_logs {
+        bigint id PK
+        uuid actor_id FK "who, null = system job (re-query, callback, nightly run)"
+        string action "TOP_UP, HOLD, RELEASE, BLOCK_ACCOUNT, EDIT_FEE, ..."
+        string entity_type
+        string entity_id
+        text old_value
+        text new_value
+        string reason "why"
+        string payment_reference
+        timestamp created_at "when"
+    }
+
+    %% ---------- Relationships ----------
+    users ||--o{ verification_requests : requests
+    users |o--o{ wallets : owns
+    users ||--o{ payments : "pays as customer"
+    users |o--o{ payments : "pays as agent"
+    users ||--o{ notifications : receives
+    users ||--o{ refund_requests : requests
+    users ||--o{ audit_logs : performs
+    users |o--o{ topups : "cash agent"
+    users ||--o{ commissions : "earns as agent"
+
+    billers |o--o| wallets : "payable wallet"
+    wallets ||--o{ ledger_entries : "has entries"
+    wallets ||--o{ topups : "credited by"
+
+    ledger_entries |o--o| ledger_entries : reverses
+    payments |o--o{ ledger_entries : causes
+    topups |o--o{ ledger_entries : causes
+    refund_requests |o--o{ ledger_entries : causes
+    ledger_entries ||--o| commissions : "credited via"
+
+    billers ||--o{ biller_services : offers
+    biller_services ||--o{ service_input_fields : requires
+    biller_services ||--o{ payments : "paid for"
+    payments ||--o{ payment_inputs : "holds values"
+
+    payments ||--o{ payment_status_history : "state changes"
+    payments ||--o| commissions : earns
+    payments ||--o{ refund_requests : "refund asked for"
+    payments |o--o{ notifications : triggers
+    payments |o--o{ biller_interactions : logs
+    billers ||--o{ biller_interactions : "calls and callbacks"
+
+    billers ||--o| fee_rules : "priced by"
+    fee_rules ||--o{ fee_tiers : "tiers"
+
+    billers ||--o{ settlement_files : sends
+    settlement_files ||--o{ settlement_entries : lists
+    settlement_files ||--o{ reconciliation_differences : flags
+    payments |o--o{ reconciliation_differences : differs
+    settlement_entries |o--o{ reconciliation_differences : differs
