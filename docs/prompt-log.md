@@ -1,26 +1,4 @@
-
 # Prompt.log
-
-**1**
-Date:
-Author:
-Stage:
-Tool and model:
-Prompt:
-Summary of answer:
-Verdict & why:
-
-
-**2**
-Date:
-Author:
-Stage:
-Tool and model:
-Prompt:
-Summary of answer:
-Verdict & why:
-
-
 
 ## 1
 Date: 24-Nov-2026
@@ -28,7 +6,7 @@ Author: Salma Kandil
 Stage: requirements
 Tool and model: claude projects (Sonnet 5.5 Medium)
 Prompt: turn FR-1 into a user story written with the format given/when/then
-Summary of answer: a user story for FR-1 with 4 different Scenarios (Successful - Already registered - Invalid - Audit trail)  
+Summary of answer: a user story for FR-1 with 4 different Scenarios (Successful - Already registered - Invalid - Audit trail)
 Verdict & why: Fixed (Audit log is added to the end of the successful scenario)
 
 
@@ -65,17 +43,17 @@ Summary of answer: generated callback scenarios but did not cover a failed callb
 Verdict & why: fixed: added a conflicting callback scenario to ensure completed payment remains unchanged and the conflict is logged.
 
 ## 5
-<Date:> 26-Nov-2026
-<Author:> Sohila Maher
-<Stage:> Requirements
-<Tool and model:> Claud.ai
-<Prompt:> Act as a Senior Business Analyst.
+Date: 26-Nov-2026
+Author: Sohila Maher
+Stage: Requirements
+Tool and model: Claud.ai
+Prompt: Act as a Senior Business Analyst.
 Analyze this FR-15 to FR-21
 User Story must follow this format:As a [user role],
 I want to [action], So that [business value].
 Provide acceptance criteria for the User Stories using Given, When, Then format. Do not remove any mandatories.
-<Summary of answer:> given 7 user stories
-<Verdict & why:> Fixed "some of scenarioes where missing parts like billers to check if they are avalable not just active to prevent servers from breaking down, also detailing the process like instead of saying{it uses AquaCo's XML 
+Summary of answer: given 7 user stories
+Verdict & why: Fixed "some of scenarioes where missing parts like billers to check if they are avalable not just active to prevent servers from breaking down, also detailing the process like instead of saying{it uses AquaCo's XML 
 
 ## 6
 Date: 24-Nov-2026
