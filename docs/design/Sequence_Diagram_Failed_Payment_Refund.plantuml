@@ -1,0 +1,33 @@
+@startuml
+title Failed Payment - Automatic Refund
+
+actor Customer
+participant "PayLink App" as App
+participant "Payment Processing" as Payment
+participant Biller
+participant "Wallet Service" as Wallet
+participant Ledger
+participant "Notification Service" as Notification
+participant "Audit Log" as Audit
+
+Payment -> Biller: Send payment request
+Biller --> Payment: Payment rejected
+
+Payment -> Payment: Update status to Failed
+Payment -> Wallet: Release held amount
+
+Wallet -> Wallet: Move amount from Held to Available
+Wallet -> Ledger: Record hold release
+Ledger --> Wallet: Entry recorded
+
+Wallet --> Payment: Hold released successfully
+Payment -> Payment: Update status to Refunded
+
+Payment -> Audit: Log Failed and Refunded events
+Payment -> Notification: Send failure notification with reason
+Notification -> Customer: SMS / Push notification
+
+Payment --> App: Return Refunded status
+App --> Customer: Display payment failure and refund confirmation
+
+@enduml
