@@ -1,5 +1,26 @@
 # Prompt.log
 
+**1**
+Date:
+Author:
+Stage:
+Tool and model:
+Prompt:
+Summary of answer:
+Verdict & why:
+
+
+**2**
+Date:
+Author:
+Stage:
+Tool and model:
+Prompt:
+Summary of answer:
+Verdict & why:
+
+
+
 ## 1
 Date: 24-Nov-2026
 Author: Salma Kandil
@@ -42,7 +63,18 @@ Prompt: Create user stories for FR-14.
 Summary of answer: generated callback scenarios but did not cover a failed callback arriving after a completed payment 
 Verdict & why: fixed: added a conflicting callback scenario to ensure completed payment remains unchanged and the conflict is logged.
 
-
+## 5
+<Date:> 26-Nov-2026
+<Author:> Sohila Maher
+<Stage:> Requirements
+<Tool and model:> Claud.ai
+<Prompt:> Act as a Senior Business Analyst.
+Analyze this FR-15 to FR-21
+User Story must follow this format:As a [user role],
+I want to [action], So that [business value].
+Provide acceptance criteria for the User Stories using Given, When, Then format. Do not remove any mandatories.
+<Summary of answer:> given 7 user stories
+<Verdict & why:> Fixed "some of scenarioes where missing parts like billers to check if they are avalable not just active to prevent servers from breaking down, also detailing the process like instead of saying{it uses AquaCo's XML 
 
 
 
