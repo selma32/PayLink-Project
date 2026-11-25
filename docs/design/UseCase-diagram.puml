@@ -1,0 +1,250 @@
+@startuml
+left to right direction
+
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+
+skinparam usecase {
+    BackgroundColor #F7F9FC
+    BorderColor #3B5B92
+    ArrowColor #3B5B92
+}
+
+skinparam actor {
+    BorderColor #333333
+    FontColor #333333
+}
+
+' =========================
+' ACTORS
+' =========================
+
+actor Customer
+actor Agent
+actor Admin
+actor "Support Employee" as Support
+
+' External Systems
+actor ElectroCo
+actor AquaCo
+actor TopUpNet
+actor "SMS Provider" as SMSProvider
+
+' Optional external biller
+actor "NetCo (Optional)" as NetCo
+
+
+' =========================
+' PAYLINK SYSTEM
+' =========================
+
+rectangle "PayLink System" {
+
+    ' =========================
+    ' ACCOUNTS AND WALLET
+    ' =========================
+
+    package "Accounts and Wallet" {
+
+        usecase "Register" as UC1
+        usecase "Upgrade to Verified" as UC2
+        usecase "View Balance and History" as UC3
+        usecase "Top Up Wallet" as UC4
+        usecase "Record Ledger Entry" as UC5
+    }
+
+
+    ' =========================
+    ' BILLER CATALOG
+    ' =========================
+
+    package "Biller Catalog" {
+
+        usecase "Manage Billers and Services" as UC6
+        usecase "Browse Billers and\nRequired Input Fields" as UC7
+    }
+
+
+    ' =========================
+    ' PAYMENT PROCESSING
+    ' =========================
+
+    package "Payment Processing" {
+
+        usecase "Run Bill Inquiry" as UC8
+        usecase "Pay Bill from Wallet" as UC9
+        usecase "Check Idempotency Key" as UC10
+        usecase "Enforce Payment Life Cycle" as UC11
+        usecase "Hold and Release Funds" as UC12
+        usecase "Handle Timeout and Re-query" as UC13
+        usecase "Handle TopUpNet Callback" as UC14
+        usecase "Request Refund" as UC27
+        usecase "Approve or Reject Refund" as UC27b
+    }
+
+
+    ' =========================
+    ' BILLER INTEGRATION
+    ' =========================
+
+    package "Biller Integration" {
+
+        usecase "Communicate with Billers" as UC15
+    }
+
+
+    ' =========================
+    ' FEES AND COMMISSIONS
+    ' =========================
+
+    package "Fees and Commissions" {
+
+        usecase "Calculate Fee" as UC16
+        usecase "Pay on Behalf of Customer" as UC17
+        usecase "Credit Agent Commission" as UC17b
+        usecase "Edit Fee and Limit Values" as UC24
+    }
+
+
+    ' =========================
+    ' FRAUD CHECKS
+    ' =========================
+
+    package "Fraud Checks" {
+
+        usecase "Perform Fraud Checks" as UC19
+    }
+
+
+    ' =========================
+    ' NOTIFICATIONS
+    ' =========================
+
+    package "Notifications" {
+
+        usecase "Send Payment Notification" as UC22
+        usecase "Retry Failed Notification" as UC23
+    }
+
+
+    ' =========================
+    ' SUPPORT AND ADMIN
+    ' =========================
+
+    package "Support and Admin" {
+
+        usecase "Search Payment and View History" as UC20
+        usecase "Block or Unblock Account" as UC21
+        usecase "View Daily Totals" as UC28
+    }
+
+
+    ' =========================
+    ' AUDIT AND RECONCILIATION
+    ' =========================
+
+    package "Audit and Reconciliation" {
+
+        usecase "Write Audit Record" as UC25
+        usecase "Reconcile Settlement File" as UC26
+    }
+}
+
+
+' =========================
+' ACTOR ASSOCIATIONS
+' =========================
+
+' Customer
+Customer -- UC1
+Customer -- UC2
+Customer -- UC3
+Customer -- UC4
+Customer -- UC7
+Customer -- UC8
+Customer -- UC9
+Customer -- UC27
+
+' Agent
+Agent -- UC4
+Agent -- UC17
+
+' Admin
+Admin -- UC6
+Admin -- UC24
+Admin -- UC28
+
+' Support Employee
+Support -- UC20
+Support -- UC21
+Support -- UC27b
+
+' External Billers
+ElectroCo -- UC15
+AquaCo -- UC15
+TopUpNet -- UC15
+NetCo -- UC15
+
+' TopUpNet callback
+TopUpNet -- UC14
+
+' SMS Provider
+SMSProvider -- UC22
+SMSProvider -- UC23
+
+
+' =========================
+' INCLUDE RELATIONSHIPS
+' =========================
+
+' Bill payment
+UC9 ..> UC10 : <<include>>
+UC9 ..> UC16 : <<include>>
+UC9 ..> UC19 : <<include>>
+UC9 ..> UC11 : <<include>>
+UC9 ..> UC12 : <<include>>
+UC9 ..> UC15 : <<include>>
+
+' Bill inquiry
+UC8 ..> UC16 : <<include>>
+UC8 ..> UC15 : <<include>>
+
+' Wallet and ledger
+UC4 ..> UC5 : <<include>>
+UC12 ..> UC5 : <<include>>
+
+' Timeout handling
+UC13 ..> UC15 : <<include>>
+
+' Agent payment and commission
+UC17 ..> UC17b : <<include>>
+UC17b ..> UC5 : <<include>>
+
+' Refund processing
+UC27b ..> UC5 : <<include>>
+
+' Audit records
+UC5 ..> UC25 : <<include>>
+UC2 ..> UC25 : <<include>>
+UC6 ..> UC25 : <<include>>
+UC24 ..> UC25 : <<include>>
+UC21 ..> UC25 : <<include>>
+UC27 ..> UC25 : <<include>>
+UC27b ..> UC25 : <<include>>
+
+
+' =========================
+' EXTEND RELATIONSHIPS
+' =========================
+
+' Exceptional or conditional payment behavior
+UC13 ..> UC9 : <<extend>>
+UC17 ..> UC9 : <<extend>>
+
+' Notifications occur following payment completion/failure
+UC22 ..> UC9 : <<extend>>
+
+' Retry only when notification delivery fails
+UC23 ..> UC22 : <<extend>>
+@enduml
