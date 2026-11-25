@@ -219,6 +219,290 @@
 **Then** the response reflects the change
 
 
+**### US-8: Perform Bill Inquiry (FR-8, Must)**
+
+**As** a customer,  
+**I want to** perform a bill inquiry,  
+**so that** I can see the bill amount, service fee, and total amount before making a payment.
+
+> Scenario 1: **Successful Electricity Bill Inquiry**
+**Given** a customer enters a valid electricity meter number and the bill amount is 350.00 EGP.
+**When** the customer performs a bill inquiry.
+**Then** the system displays:
+Bill Amount: 350.00 EGP
+Service Fee: 2.50 EGP
+Total Amount: 352.50 EGP
+
+> Scenario 2: **Successful Water Bill Inquiry**
+**Given** a customer enters a valid water account number and the bill amount is 120.75 EGP.
+**When** the customer performs a bill inquiry.
+**Then** the system displays:
+Bill Amount: 120.75 EGP
+Service Fee: 2.50 EGP
+Total Amount: 123.25 EGP
+
+> Scenario 3: **Invalid Account Information**
+**Given** a customer enters an invalid meter or account number.
+**When** the customer performs a bill inquiry.
+**Then** the system displays "Bill not found".
+**And** no payment total is displayed.
+
+> Scenario 4: **Biller Unavailable**
+**Given** the biller does not respond to the inquiry request.
+**When** the customer performs a bill inquiry.
+**Then** no payment total is displayed.
+**And** the system displays "Biller unavailable, try again later".
+
+---
+
+**### US-9: Wallet Bill Payment (FR-9, Must)**
+
+**As** a customer,  
+**I want to** pay bills using my wallet,  
+**so that** I can complete bill payments and ensure my funds are handled correctly throughout the payment process.
+
+> Scenario 1: **Funds Held When Payment Is Confirmed**
+**Given** the available balance is 1,000.00 EGP and the held balance is 0.00 EGP.
+**And** the bill total is 352.50 EGP.
+**When** the customer confirms the payment.
+**Then** the payment state becomes FundsHeld.
+
+> Scenario 2: **Biller Confirms the Payment**
+**Given** a payment is in SentToBiller and 352.50 EGP is held.
+**When** the biller confirms the payment.
+**Then** the payment state becomes Completed.
+**And** the held balance becomes 0.00 EGP and the available balance stays 647.50 EGP.
+**And** 350.00 EGP is paid to the biller and 2.50 EGP is credited to PayLink's fee income.
+**And** ledger entries and audit records are written for the final charge and the fee income.
+
+> Scenario 3: **Insufficient Funds**
+**Given** the available balance is 100.00 EGP and the bill total is 352.50 EGP.
+**When** the customer attempts to pay.
+**Then** the payment state becomes Rejected.
+**And** the system displays "Insufficient funds".
+**And** both balances remain unchanged and the biller is not called.
+
+> Scenario 4: **Amount Above the Maximum (Both Account Types)**
+**Given** the maximum single payment is 10,000.00 EGP.
+**When** the customer attempts to pay a bill amount of 10,000.01 EGP.
+**Then** the payment state becomes Rejected.
+**And** the system displays "Amount above the 10,000.00 maximum".
+**And** both balances remain unchanged.
+
+> Scenario 5: **Amount Below the Minimum (Both Account Types)**
+**Given** the minimum single payment is 5.00 EGP.
+**When** the customer attempts to pay a bill amount of 4.99 EGP.
+**Then** the payment state becomes Rejected.
+**And** the system displays "Amount below the 5.00 minimum".
+**And** both balances remain unchanged.
+
+> Scenario 6: **Two Concurrent Payments Exceed Available Balance**
+**Given** a customer has 500 EGP available in their wallet.
+**And** each payment requires 352.50 EGP, including fees.
+**When** the customer initiates both payments at nearly the same time.
+**Then** only one payment can successfully reserve 352.50 EGP.
+**And** the other payment is rejected due to insufficient available balance.
+**And** the customer's available balance must never become negative.
+
+---
+
+**### US-10: Idempotent Payment Requests (FR-10, Must)**
+
+**As** a customer,  
+**I want to** repeated payment requests with the same idempotency key to return the original result,  
+**so that** I can safely retry requests without being charged multiple times.
+
+> Scenario 1: **Duplicate Request with Identical Parameters**
+**Given** a payment request with idempotency key K1 has already been processed successfully and its payment state is Completed.
+**When** the customer submits the same payment request again using K1 with identical parameters.
+**Then** the system returns the original payment result without creating a new payment or deducting funds again.
+
+> Scenario 2: **Duplicate Request with Different Parameters**
+**Given** a payment request with idempotency key K1 has already been submitted with an amount of 352.50 EGP.
+**When** the customer submits another request using K1 but with a different amount or bill reference.
+**Then** the system rejects the request with an idempotency key conflict error without modifying the original payment or wallet balance.
+
+> Scenario 3: **Duplicate Request While Payment Is Processing**
+**Given** a payment request with idempotency key K1 has already been accepted and is in FundsHeld, SentToBiller, or Unknown state.
+**When** the customer submits the same request again using K1 with identical parameters.
+**Then** the system returns the existing payment reference and current payment status without creating another payment, placing an additional hold, or automatically refunding an Unknown payment.
+
+---
+
+**### US-11: Payment State Machine (FR-11, Must)**
+
+**As** the system,  
+**I want to** move a payment only through the transitions allowed in section 2.5 and refuse all others,  
+**so that** every payment is in exactly one valid state and its history can be trusted.
+
+> Scenario 1: **Initiated Moves to FundsHeld**
+**Given** a payment is in Initiated.
+**When** the fraud checks pass and the wallet has enough funds.
+**Then** the payment state becomes FundsHeld.
+
+> Scenario 2: **Initiated Moves to Rejected**
+**Given** a payment is in Initiated.
+**When** a fraud check fails or the wallet does not have enough funds.
+**Then** the payment state becomes Rejected.
+
+> Scenario 3: **FundsHeld Moves to SentToBiller**
+**Given** a payment is in FundsHeld.
+**When** the request is sent to the biller.
+**Then** the payment state becomes SentToBiller.
+
+> Scenario 4: **SentToBiller Moves to Completed**
+**Given** a payment is in SentToBiller.
+**When** the biller confirms the payment.
+**Then** the payment state changes to Completed.
+
+> Scenario 5: **SentToBiller Moves to Failed**
+**Given** a payment is in SentToBiller.
+**When** the biller refuses the payment.
+**Then** the payment state changes to Failed.
+
+> Scenario 6: **SentToBiller Moves to Unknown**
+**Given** a payment is in SentToBiller.
+**When** the biller does not respond within the timeout.
+**Then** the payment state changes to Unknown.
+
+> Scenario 7: **Unknown Moves to Completed**
+**Given** a payment is in Unknown.
+**When** the biller later confirms the payment.
+**Then** the payment state changes to Completed.
+
+> Scenario 8: **Unknown Moves to Failed**
+**Given** a payment is in Unknown.
+**When** the biller later refuses the payment or reconciliation finds no payment.
+**Then** the payment state changes to Failed.
+
+> Scenario 9: **Failed Moves to Refunded**
+**Given** a payment is in Failed.
+**When** the wallet hold is released.
+**Then** the payment state changes to Refunded.
+
+> Scenario 10: **Prevent Transitions from Final States**
+**Given** a payment is in Completed, Rejected, or Refunded.
+**When** the system attempts any further state transition.
+**Then** the transition is rejected and the payment remains in its current state.
+
+---
+
+**### US-12: Wallet Hold and Release (FR-12, Must)**
+
+**As** a customer,  
+**I want to** have my money held before the biller is called and released if the payment fails,  
+**so that** I cannot spend the same money twice and I never lose money for a payment that did not happen.
+
+> Scenario 1: **Funds Are Held Before the Biller Is Called**
+**Given** the available balance is 1,000.00 EGP and the held balance is 0.00 EGP.
+**When** the customer pays a total of 352.50 EGP.
+**Then** the available balance becomes 647.50 EGP and the held balance becomes 352.50 EGP.
+**And** a ledger entry records the hold of 352.50 EGP.
+**And** the request is sent to the biller only after this hold exists.
+
+> Scenario 2: **Hold Is Released When the Biller Refuses**
+**Given** a payment is in SentToBiller and 352.50 EGP is held.
+**When** the biller refuses the payment.
+**Then** the payment state becomes Failed.
+**And** the hold is released, so the available balance returns to 1,000.00 EGP and the held balance becomes 0.00 EGP.
+**And** the payment state becomes Refunded.
+**And** a ledger entry records the release of 352.50 EGP.
+
+> Scenario 3: **Hold Is Kept While the Payment Is Unknown**
+**Given** a payment is in Unknown and 352.50 EGP is held.
+**When** no confirmation or refusal has arrived from the biller.
+**Then** the held balance stays 352.50 EGP.
+**And** no release ledger entry is created and no refund is made.
+
+---
+
+**### US-13: Timeout and Re-query (FR-13, Must)**
+
+**As** a customer,  
+**I want to** have a payment that times out kept as Unknown and re-queried automatically,  
+**so that** I am not charged twice or refunded by mistake while the biller's answer is still unknown.
+
+> Scenario 1: **Biller Times Out**
+**Given** a payment is in SentToBiller and 352.50 EGP is held.
+**When** the biller does not answer within 10 seconds (for example ElectroCo answers after 12 seconds).
+**Then** the payment state becomes Unknown.
+**And** the customer sees "Your payment is being processed".
+**And** the held balance stays 352.50 EGP and no refund is made.
+
+> Scenario 2: **Re-query Schedule**
+**Given** a payment became Unknown at 10:00.
+**When** the time reaches the scheduled re-queries.
+**Then** the system re-queries the biller after 1, 5 and 15 minutes (up to 3 times).
+**And** each re-query uses the original payment reference and does not create a new payment or a new hold.
+
+> Scenario 3: **Re-query Shows the Biller Confirmed**
+**Given** a payment is in Unknown.
+**When** a re-query shows that the biller confirmed the payment.
+**Then** the payment state becomes Completed.
+**And** the held balance becomes 0.00 EGP and no further re-queries are made.
+
+> Scenario 4: **Re-query Shows the Biller Refused**
+**Given** a payment is in Unknown and 352.50 EGP is held.
+**When** a re-query shows that the biller refused the payment.
+**Then** the payment state becomes Failed and then Refunded.
+**And** the held 352.50 EGP is released back to the available balance.
+
+> Scenario 5: **All Re-queries Get No Answer**
+**Given** a payment is in Unknown.
+**When** the re-queries after 1, 5 and 15 minutes all get no answer.
+**Then** the payment state stays Unknown and no more re-queries are made.
+**And** the held balance stays 352.50 EGP and the payment waits for reconciliation.
+**And** no automatic refund is made.
+
+---
+
+**### US-14: TopUpNet Callback Handling (FR-14, Must)**
+
+**As** the system,  
+**I want to** accept TopUpNet's asynchronous callbacks and ignore duplicates,  
+**so that** a mobile top-up reaches its final state exactly once and a customer is never charged or credited twice.
+
+> Scenario 1: **Success Callback Completes the Payment**
+**Given** TopUpNet replied "accepted" and the payment is in SentToBiller with 352.50 EGP held.
+**When** TopUpNet calls the callback URL with "success" and the payment reference.
+**Then** the payment state becomes Completed.
+**And** the held balance becomes 0.00 EGP and one final charge ledger entry is created.
+
+> Scenario 2: **Failed Callback Fails and Refunds the Payment**
+**Given** TopUpNet replied "accepted" and the payment is in SentToBiller with 352.50 EGP held.
+**When** TopUpNet calls the callback URL with "failed" and the payment reference.
+**Then** the payment state becomes Failed and then Refunded.
+**And** the held 352.50 EGP is released back to the available balance.
+
+> Scenario 3: **Duplicate Success Callback Is Ignored**
+**Given** a payment is already Completed by a "success" callback.
+**When** TopUpNet sends a second "success" callback with the same payment reference.
+**Then** the payment state stays Completed.
+**And** no new ledger entry is created.
+**And** the duplicate is logged with the payment reference and the time.
+
+> Scenario 4: **Conflicting Callback Is Ignored**
+**Given** a payment is already Completed by a "success" callback.
+**When** TopUpNet sends a "failed" callback with the same payment reference.
+**Then** the payment state stays Completed and no balance changes.
+**And** the conflict is logged.
+
+> Scenario 5: **Callback Resolves an Unknown Payment**
+**Given** a payment is in Unknown with 352.50 EGP held.
+**When** TopUpNet calls the callback URL with "success".
+**Then** the payment state becomes Completed and the held balance becomes 0.00 EGP.
+
+> Scenario 6: **Callback With an Unknown Reference**
+**Given** no payment exists with the reference "P-999".
+**When** TopUpNet calls the callback URL with that reference.
+**Then** no payment or balance changes.
+**And** the system returns an error "Payment reference not found" and logs the callback.
+
+
+
+
+
+
 ## Non-functional Requirements
 
 ## Priorities
@@ -251,4 +535,31 @@ Decision: The stricter applies; admins cannot save a service range outside the g
 **Q9. should the list be public or only for logged-in customers? US-7**\
 Decision: logged-in.
 
+**## Questions or ambiguities**
 
+**Q10. What customer information is required for each biller, and what should happen if the bill is already paid or expired? US-8**\\
+Decision: Use each biller's required fields and reject already-paid or expired bills.
+
+**Q11. Is there a timeout limit for bill inquiries, and should failed inquiries be retried automatically or only when the customer requests another inquiry? US-8**\\
+Decision: Use the 10-second timeout. The customer retries failed inquiries manually.
+
+**Q12. Should the wallet hold cover the bill amount plus the transaction fee, and what happens if the available balance changes before the hold is created? US-9, US-12**\\
+Decision: Hold the full amount, including the fee, after checking the available balance again.
+
+**Q13. What is the scope and retention period of an idempotency key, and can it be reused if the original request fails before a payment record is created? US-10**\\
+Decision: Keys are unique per customer and endpoint. They can be reused if no payment was created.
+
+**Q14. What exact error should be returned for a refused state transition, and should repeated transitions to the same state or manual support transitions be allowed? US-11**\\
+Decision: Return an invalid-transition error and ignore duplicate transitions.
+
+**Q15. Is the Failed → Refunded transition automatic, and what happens if the release ledger entry fails? Should holds and releases also have audit records under FR-25? US-11, US-12**\\
+Decision: Refund after a successful hold release, and log all holds and releases.
+
+**Q16. Does the 10-second payment timeout apply to all billers, or only AquaCo and ElectroCo, and are scheduled re-queries preserved if the system restarts? US-13**\\
+Decision: Apply it to live billers only and save scheduled re-queries.
+
+**Q17. Can a customer initiate another payment for the same bill while the original payment is still in Unknown? US-13**\\
+Decision: No, the customer must wait until the original payment is resolved.
+
+**Q18. What should happen if a callback arrives before the payment reaches SentToBiller, or if a failed callback arrives while the payment is Unknown? US-14**\\
+Decision: Ignore and log early callbacks. A failed callback in Unknown moves the payment to Failed, then Refunded.
