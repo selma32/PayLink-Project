@@ -1,0 +1,326 @@
+
+sequenceDiagram
+    autonumber
+
+    actor Customer
+    actor Agent
+    participant App as PayLink App
+    participant Payment as Payment Service
+    participant Fee as Fee Calculator
+    participant Validator as Validation Service
+    participant Wallet as Wallet Service
+    participant Ledger as Ledger Service
+    participant DB as Database
+    participant Adapter as Biller Adapter
+    participant Biller as External Biller
+    participant Requery as Requery Scheduler
+    participant Callback as Callback Handler
+    participant Commission as Commission Service
+    participant Notification as Notification Service
+    participant SMS as SMS Provider
+    participant Push as Push Provider
+    participant Audit as Audit Log
+
+    %% 1. Browse billers and services
+    Customer->>App: Open Pay a Bill
+    App->>DB: Get active billers and services
+    DB-->>App: Return billers, services and required fields
+    App-->>Customer: Display billers and required input fields
+
+    %% 2. Select service and enter bill information
+    Customer->>App: Select biller and service
+    App-->>Customer: Display required bill information fields 
+    Customer->>App: Enter bill reference and required details
+
+    %% 3. Bill inquiry
+    App->>Payment: Request bill inquiry
+    Payment->>Validator: Validate service and biller status
+    Validator->>DB: Check biller and service configuration
+    DB-->>Validator: Return configuration
+
+    alt Biller or service is inactive
+        Validator-->>Payment: Validation failed
+        Payment-->>App: Return unavailable service error
+        App-->>Customer: Display error
+    else Biller and service are active
+        Payment->>Adapter: Send bill inquiry
+        Adapter->>Biller: Inquiry request using biller protocol
+
+        alt Biller responds within 10 seconds
+            Biller-->>Adapter: Bill inquiry response
+            Adapter-->>Payment: Bill details and status
+
+            alt Bill is already paid or expired
+                Payment-->>App: Reject inquiry
+                App-->>Customer: Display bill unavailable message
+            else Bill is valid
+                Payment->>Fee: Calculate service fee
+                Fee->>DB: Get applicable fee and promotion
+                DB-->>Fee: Return fee configuration
+
+                alt Electricity or water
+                    Fee->>Fee: Apply fixed fee of 2.50 EGP
+                else Mobile top-up
+                    Fee->>Fee: Calculate 1.5% with minimum 1 EGP
+                else Internet bill
+                    Fee->>Fee: Apply 2 EGP up to 200 EGP, otherwise 4 EGP
+                end
+
+                opt Active promotion exists
+                    Fee->>Fee: Set service fee to 0 EGP
+                end
+
+                Fee->>Fee: Round fee to 2 decimals using Round Half Up
+                Fee-->>Payment: Return service fee
+                Payment-->>App: Return bill amount, fee and total
+                App-->>Customer: Display bill details and total amount
+
+                %% 4. Confirm payment
+                Customer->>App: Confirm payment
+                App->>Payment: Submit payment request and idempotency key
+
+                %% 5. Idempotency check
+                Payment->>DB: Check customer, endpoint and idempotency key
+
+                alt Duplicate request with same payload
+                    DB-->>Payment: Existing payment found
+                    Payment-->>App: Return existing payment result
+                    App-->>Customer: Display existing payment status
+                else Key reused with different payload
+                    DB-->>Payment: Request hash mismatch
+                    Payment-->>App: Reject conflicting request
+                    App-->>Customer: Display idempotency error
+                else New idempotency key
+                    DB-->>Payment: Key is available
+
+                    %% 6. Validate customer and payment attempts
+                    Payment->>Validator: Validate customer and payment
+
+                    Validator->>DB: Check account status and verification level
+                    DB-->>Validator: Return account information
+
+                    alt Account is blocked
+                        Validator-->>Payment: Account blocked
+                        Payment-->>App: Reject payment
+                        App-->>Customer: Display account blocked message
+                    else Account is active
+                        Validator->>DB: Count payment attempts in last 60 seconds
+                        DB-->>Validator: Return attempt count
+
+                        alt More than 5 attempts within 60 seconds
+                            Validator->>DB: Block account for 10 minutes
+                            Validator->>Audit: Record temporary account block
+                            Validator-->>Payment: Velocity limit exceeded
+                            Payment-->>App: Reject payment
+                            App-->>Customer: Display temporary block message
+                        else 5 or fewer attempts
+                            Validator->>DB: Record payment attempt
+                            Validator->>DB: Get global, service and daily limits
+                            DB-->>Validator: Return applicable limits
+
+                            alt Amount below 5 EGP or above 10,000 EGP
+                                Validator-->>Payment: Single payment limit exceeded
+                                Payment-->>App: Reject payment
+                                App-->>Customer: Display single payment limit error
+                            else Amount exceeds service-specific limits
+                                Validator-->>Payment: Service amount limit exceeded
+                                Payment-->>App: Reject payment
+                                App-->>Customer: Display service limit error
+                            else Mobile top-up amount below 10 EGP
+                                Validator-->>Payment: Top-up minimum not satisfied
+                                Payment-->>App: Reject payment
+                                App-->>Customer: Display top-up minimum error
+                            else Amount is within single payment limits
+                                alt Basic account daily total exceeds 5,000 EGP
+                                    Validator-->>Payment: Daily limit exceeded
+                                    Payment-->>App: Reject payment
+                                    App-->>Customer: Display Basic daily limit error
+                                else Verified account daily total exceeds 30,000 EGP
+                                    Validator-->>Payment: Daily limit exceeded
+                                    Payment-->>App: Reject payment
+                                    App-->>Customer: Display Verified daily limit error
+                                else Payment is within all limits
+                                    Validator-->>Payment: Validation successful
+
+                                    %% 7. Create payment and hold funds
+                                    Payment->>DB: Create payment with status FundsHeld
+                                    Payment->>Wallet: Hold total amount including fee
+                                    Wallet->>DB: Recheck available balance
+
+                                    alt Insufficient available balance
+                                        DB-->>Wallet: Insufficient balance
+                                        Wallet-->>Payment: Hold failed
+                                        Payment->>DB: Mark payment Rejected
+                                        Payment-->>App: Payment rejected
+                                        App-->>Customer: Display insufficient balance
+                                    else Sufficient available balance
+                                        DB-->>Wallet: Balance available
+                                        Wallet->>Ledger: Record hold entries
+                                        Note over Wallet,Ledger: Hold and release entries share a transaction ID and are saved atomically
+                                        Ledger->>DB: Save hold ledger entries
+                                        DB-->>Ledger: Hold recorded
+                                        Ledger-->>Wallet: Hold successful
+                                        Wallet-->>Payment: Funds held successfully
+                                        Payment->>Audit: Record money hold
+                                        Payment->>DB: Save idempotency key and payment reference
+
+                                        %% 8. Send payment to biller
+                                        Payment->>DB: Update status to SentToBiller
+                                        Payment->>Adapter: Send payment request
+                                        Adapter->>Biller: Payment request
+
+                                        alt Biller confirms payment synchronously
+                                            Biller-->>Adapter: Payment successful
+                                            Adapter-->>Payment: Success response
+                                            Payment->>DB: Validate state transition
+                                            Payment->>DB: Update status to Completed
+                                            Payment->>Wallet: Finalize held amount
+                                            Wallet->>Ledger: Record final charge and fee entries
+                                            Ledger->>DB: Save charge ledger entries
+                                            Payment->>Audit: Record charge and fee income
+
+                                            opt Payment initiated by an agent
+                                                Payment->>Commission: Calculate 40% of service fee
+                                                Commission->>DB: Credit agent wallet
+                                                Commission->>Audit: Record agent commission
+                                            end
+
+                                            Payment->>Notification: Send payment success notification
+                                            Notification->>SMS: Send SMS with amount and reference
+                                            Notification->>Push: Send push notification
+                                            Notification->>DB: Save notification status
+
+                                            opt Notification delivery fails
+                                                loop Up to 3 retries after first attempt
+                                                    Notification->>SMS: Retry sending notification
+                                                    SMS-->>Notification: Delivery result
+                                                end
+                                                Notification->>DB: Mark Undelivered if all attempts fail
+                                            end
+
+                                            Payment-->>App: Payment completed
+                                            App-->>Customer: Display successful payment
+
+                                        else Biller refuses payment
+                                            Biller-->>Adapter: Payment refused with reason
+                                            Adapter-->>Payment: Failure response
+                                            Payment->>DB: Validate state transition
+                                            Payment->>DB: Update status to Failed
+                                            Payment->>Wallet: Release held amount
+                                            Wallet->>Ledger: Record hold release entries
+                                            Ledger->>DB: Save release entries
+                                            Payment->>DB: Update status to Refunded
+                                            Payment->>Audit: Record hold release
+                                            Payment->>Notification: Send failure notification
+                                            Notification->>SMS: Send failure SMS with reason
+                                            Notification->>Push: Send failure push notification
+                                            Payment-->>App: Payment failed
+                                            App-->>Customer: Display failure reason
+
+                                        else Biller does not respond within 10 seconds
+                                            Payment->>DB: Update status to Unknown
+                                            Payment->>Requery: Schedule re-queries
+                                            Note over Payment,Wallet: Held funds remain held. No automatic refund or release.
+                                            Payment->>Notification: Notify customer payment is processing
+                                            Notification->>SMS: Send processing notification
+                                            Notification->>Push: Send processing notification
+                                            Payment-->>App: Payment status Unknown
+                                            App-->>Customer: Your payment is being processed
+
+                                            %% 9. Re-query process
+                                            loop Re-query after 1, 5 and 15 minutes (up to 3 attempts)
+                                                Requery->>DB: Get original payment reference
+                                                Requery->>Adapter: Re-query original payment
+                                                Adapter->>Biller: Check payment status
+
+                                                alt Biller confirms payment
+                                                    Biller-->>Adapter: Success
+                                                    Adapter-->>Requery: Payment confirmed
+                                                    Requery->>Payment: Resolve payment as Completed
+                                                    Payment->>DB: Update status to Completed
+                                                    Payment->>Wallet: Finalize held amount
+                                                    Wallet->>Ledger: Record final charge
+                                                    Ledger->>DB: Save charge entry
+                                                    Payment->>Audit: Record final charge
+                                                    Payment->>Notification: Send success notification
+                                                    Payment-->>App: Payment completed
+                                                else Biller refuses payment
+                                                    Biller-->>Adapter: Failed
+                                                    Adapter-->>Requery: Payment refused
+                                                    Requery->>Payment: Resolve payment as Failed
+                                                    Payment->>DB: Update status to Failed
+                                                    Payment->>Wallet: Release held amount
+                                                    Wallet->>Ledger: Record release entries
+                                                    Ledger->>DB: Save release entries
+                                                    Payment->>DB: Update status to Refunded
+                                                    Payment->>Audit: Record hold release
+                                                    Payment->>Notification: Send failure notification
+                                                    Payment-->>App: Payment failed and refunded
+                                                else No response
+                                                    Biller-->>Adapter: No response
+                                                    Adapter-->>Requery: No result
+                                                    Requery->>DB: Save re-query attempt
+                                                    Note over Requery,Payment: Continue to next scheduled attempt
+                                                end
+                                            end
+
+                                            opt All 3 re-queries receive no answer
+                                                Requery->>DB: Keep payment status Unknown
+                                                Requery->>DB: Wait for reconciliation
+                                                Note over Payment,Wallet: Keep funds held. Do not create another payment for the same bill.
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        else Inquiry timeout or unavailable biller
+            Adapter-->>Payment: Inquiry timeout or failure
+            Payment-->>App: Inquiry failed
+            App-->>Customer: Display inquiry error
+            Note over Customer,App: Customer must manually retry the inquiry
+        end
+    end
+
+    %% 10. TopUpNet asynchronous callback
+    opt TopUpNet sends asynchronous callback
+        Biller->>Callback: Callback with payment reference and result
+        Callback->>DB: Find payment by reference
+
+        alt Payment reference not found
+            DB-->>Callback: No payment found
+            Callback-->>Biller: Payment reference not found
+            Callback->>Audit: Log callback with unknown reference
+        else Payment found
+            DB-->>Callback: Return payment and current status
+
+            alt Callback arrives before SentToBiller
+                Callback->>Audit: Log and ignore early callback
+            else Payment already Completed, Refunded or Rejected
+                Callback->>Audit: Log duplicate or conflicting callback
+                Note over Callback,Payment: Ignore callback. Do not change balance or create ledger entries.
+            else Callback result is success and payment is SentToBiller or Unknown
+                Callback->>Payment: Resolve payment as Completed
+                Payment->>DB: Validate state transition
+                Payment->>DB: Update status to Completed
+                Payment->>Wallet: Finalize held amount
+                Wallet->>Ledger: Record final charge exactly once
+                Ledger->>DB: Save charge entry
+                Payment->>Audit: Record final charge
+                Payment->>Notification: Send success notification
+            else Callback result is failed and payment is SentToBiller or Unknown
+                Callback->>Payment: Resolve payment as Failed
+                Payment->>DB: Validate state transition
+                Payment->>DB: Update status to Failed
+                Payment->>Wallet: Release held amount
+                Wallet->>Ledger: Record release entries
+                Ledger->>DB: Save release entries
+                Payment->>DB: Update status to Refunded
+                Payment->>Audit: Record hold release
+                Payment->>Notification: Send failure notification
+            end
+        end
+    end
