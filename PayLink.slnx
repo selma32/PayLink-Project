@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PayLink.Api/PayLink.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PayLink.Tests/PayLink.Tests.csproj" />
+  </Folder>
+</Solution>
