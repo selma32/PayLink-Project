@@ -1,6 +1,6 @@
 # Prompt.log
 
-### 1
+## 1
 Date: 24-Nov-2026\
 Author: Salma Kandil\
 Stage: requirements\
@@ -10,7 +10,7 @@ Summary of answer: a user story for FR-1 with 4 different Scenarios (Successful 
 Verdict & why: Fixed (Audit log is added to the end of the successful scenario)
 
 
-### 2
+## 2
 Date: 24-Nov-2026\
 Author: Salma Kandil\
 Stage: requirements\
@@ -23,7 +23,7 @@ I found "As a basic customer, I want to be upgraded to VERIFIED ..." to make the
 also adding another scenario: already VERIFIED)
 
 
-### 3
+## 3
 Date: 24-Nov-2026\
 Author: Salma Fathy\
 Stage: requirements\
@@ -33,7 +33,7 @@ Summary of answer: cover re-query attempts and unresolved payments, and avoid in
 Verdict & why: Rejected: The output assumed that if a payment is unresolved it should be refunded automatically, while in this case the conflict should be resolved through reconiliation\
 
 
-### 4
+## 4
 Date: 24-Nov-2026\
 Author: Salma Fathy\
 Stage: requirements\
@@ -42,7 +42,7 @@ Prompt: Create user stories for FR-14.\
 Summary of answer: generated callback scenarios but did not cover a failed callback arriving after a completed payment \
 Verdict & why: fixed: added a conflicting callback scenario to ensure completed payment remains unchanged and the conflict is logged.\
 
-### 5
+## 5
 Date: 26-Nov-2026\
 Author: Sohila Maher\
 Stage: Requirements\
@@ -55,7 +55,7 @@ Provide acceptance criteria for the User Stories using Given, When, Then format.
 Summary of answer: given 7 user stories\
 Verdict & why: Fixed "some of scenarioes where missing parts like billers to check if they are avalable not just active to prevent servers from breaking down, also detailing the process like instead of saying{it uses AquaCo's XML\
 
-### 6
+## 6
 Date: 24-Nov-2026\
 Author: Shrouk Esam\
 Stage: requirements\
@@ -64,7 +64,7 @@ Prompt: Write a user story for FR-22 (customer receives an SMS and a push messag
 Summary of answer: a user story for FR-22 with 3 criteria (Completed notification, Failed notification, notification accuracy)\
 Verdict & why: Fixed ("in progress" is not a valid state, so it became SentToBiller; the "accuracy" criterion was untestable, so it was removed; added Unknown → Failed and the SMS-provider-down case, so the final story has 4 criteria)\
 
-### 7
+## 7
 Date: 24-Nov-2026\
 Author: Shrouk Esam\
 Stage: requirements\
