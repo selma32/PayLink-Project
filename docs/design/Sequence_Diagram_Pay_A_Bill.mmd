@@ -1,4 +1,3 @@
-
 sequenceDiagram
     autonumber
 
@@ -80,7 +79,7 @@ sequenceDiagram
                 App->>Payment: Submit payment request and idempotency key
 
                 %% 5. Idempotency check
-                Payment->>DB: Check customer, endpoint and idempotency key
+                Payment->>DB: Check customer and idempotency key
 
                 alt Duplicate request with same payload
                     DB-->>Payment: Existing payment found
@@ -92,9 +91,12 @@ sequenceDiagram
                     App-->>Customer: Display idempotency error
                 else New idempotency key
                     DB-->>Payment: Key is available
+                    Payment->>DB: Create payment with status Initiated (saves idempotency key and request hash)
+                    Note over Payment,DB: A concurrent duplicate hits UNIQUE (customer_id, idempotency_key) and is handled as the duplicate case
 
-                    %% 6. Validate customer and payment attempts
+                    %% 6. Validate customer and payment
                     Payment->>Validator: Validate customer and payment
+                    Note over Payment,Validator: Any rejection in this validation step moves the payment from Initiated to Rejected and writes a status history row
 
                     Validator->>DB: Check account status and verification level
                     DB-->>Validator: Return account information
@@ -104,17 +106,16 @@ sequenceDiagram
                         Payment-->>App: Reject payment
                         App-->>Customer: Display account blocked message
                     else Account is active
-                        Validator->>DB: Count payment attempts in last 60 seconds
-                        DB-->>Validator: Return attempt count
+                        Validator->>DB: Count this customer's payments created in the last 60 seconds (including this one)
+                        DB-->>Validator: Return payment count
 
-                        alt More than 5 attempts within 60 seconds
+                        alt More than 5 payments within 60 seconds
                             Validator->>DB: Block account for 10 minutes
                             Validator->>Audit: Record temporary account block
                             Validator-->>Payment: Velocity limit exceeded
                             Payment-->>App: Reject payment
                             App-->>Customer: Display temporary block message
-                        else 5 or fewer attempts
-                            Validator->>DB: Record payment attempt
+                        else 5 or fewer payments
                             Validator->>DB: Get global, service and daily limits
                             DB-->>Validator: Return applicable limits
 
@@ -142,10 +143,9 @@ sequenceDiagram
                                 else Payment is within all limits
                                     Validator-->>Payment: Validation successful
 
-                                    %% 7. Create payment and hold funds
-                                    Payment->>DB: Create payment with status FundsHeld
+                                    %% 7. Hold funds
                                     Payment->>Wallet: Hold total amount including fee
-                                    Wallet->>DB: Recheck available balance
+                                    Wallet->>DB: Lock wallet (bump version) and recheck available balance
 
                                     alt Insufficient available balance
                                         DB-->>Wallet: Insufficient balance
@@ -156,13 +156,13 @@ sequenceDiagram
                                     else Sufficient available balance
                                         DB-->>Wallet: Balance available
                                         Wallet->>Ledger: Record hold entries
-                                        Note over Wallet,Ledger: Hold and release entries share a transaction ID and are saved atomically
+                                        Note over Wallet,Ledger: All ledger entries of one money movement share a transaction ID and are saved atomically (hold: 2 entries, charge: 3 entries)
                                         Ledger->>DB: Save hold ledger entries
                                         DB-->>Ledger: Hold recorded
                                         Ledger-->>Wallet: Hold successful
                                         Wallet-->>Payment: Funds held successfully
                                         Payment->>Audit: Record money hold
-                                        Payment->>DB: Save idempotency key and payment reference
+                                        Payment->>DB: Validate state transition and update status to FundsHeld
 
                                         %% 8. Send payment to biller
                                         Payment->>DB: Update status to SentToBiller
@@ -175,7 +175,7 @@ sequenceDiagram
                                             Payment->>DB: Validate state transition
                                             Payment->>DB: Update status to Completed
                                             Payment->>Wallet: Finalize held amount
-                                            Wallet->>Ledger: Record final charge and fee entries
+                                            Wallet->>Ledger: Record final charge in one transaction (customer HELD, biller payable, fee income)
                                             Ledger->>DB: Save charge ledger entries
                                             Payment->>Audit: Record charge and fee income
 

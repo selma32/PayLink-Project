@@ -1,0 +1,515 @@
+@startuml
+
+title PayLink - Domain Class Diagram
+
+left to right direction
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+
+' =========================
+' ENUMS
+' =========================
+
+enum VerificationLevel {
+    BASIC
+    VERIFIED
+}
+
+enum AccountStatus {
+    ACTIVE
+    BLOCKED
+}
+
+enum PaymentStatus {
+    INITIATED
+    FUNDS_HELD
+    SENT_TO_BILLER
+    COMPLETED
+    FAILED
+    UNKNOWN
+    REJECTED
+    REFUNDED
+}
+
+enum HoldStatus {
+    ACTIVE
+    CAPTURED
+    RELEASED
+}
+
+enum TopUpSource {
+    SIMULATED_CARD
+    AGENT_CASH
+}
+
+enum TopUpStatus {
+    PENDING
+    COMPLETED
+    FAILED
+}
+
+enum FeeType {
+    FIXED
+    PERCENTAGE
+    TIERED
+}
+
+enum RefundStatus {
+    REQUESTED
+    APPROVED
+    REJECTED
+    COMPLETED
+}
+
+enum LedgerEntryType {
+    TOP_UP
+    PAYMENT
+    REFUND
+    COMMISSION
+}
+
+enum TransactionDirection {
+    CREDIT
+    DEBIT
+}
+
+enum NotificationChannel {
+    SMS
+    PUSH
+}
+
+enum NotificationStatus {
+    PENDING
+    SENT
+    UNDELIVERED
+}
+
+enum AttemptStatus {
+    SUCCESS
+    FAILED
+}
+
+enum CallbackStatus {
+    RECEIVED
+    PROCESSED
+    IGNORED
+}
+
+enum BlockSource {
+    MANUAL
+    VELOCITY
+}
+
+enum ReconciliationStatus {
+    MATCHED
+    MISMATCHED
+    UNMATCHED
+}
+
+' =========================
+' USERS AND WALLETS
+' =========================
+
+package "Users and Wallets" {
+
+    abstract class User {
+        userId
+        name
+        email
+        phone
+        status : AccountStatus
+    }
+
+    class Customer {
+        verificationLevel : VerificationLevel
+    }
+
+    class Agent
+
+    class Admin
+
+    class SupportEmployee
+
+    class Wallet {
+        walletId
+        currency
+        /availableBalance
+        /heldBalance
+    }
+
+    class LedgerEntry {
+        entryId
+        amount
+        direction : TransactionDirection
+        entryType : LedgerEntryType
+        description
+        createdAt
+    }
+
+    class WalletHold {
+        holdId
+        amount
+        status : HoldStatus
+        createdAt
+        releasedAt
+    }
+
+    class TopUpTransaction {
+        topUpId
+        amount
+        source : TopUpSource
+        status : TopUpStatus
+        createdAt
+    }
+
+    User <|-- Customer
+    User <|-- Agent
+    User <|-- Admin
+    User <|-- SupportEmployee
+
+    Customer "1" -- "1" Wallet : owns
+
+    Wallet "1" *-- "0..*" LedgerEntry : records
+    Wallet "1" *-- "0..*" WalletHold : contains
+
+    Customer "1" -- "0..*" TopUpTransaction : requests
+    Agent "0..1" -- "0..*" TopUpTransaction : handles cash top-up
+
+    Wallet "1" -- "0..*" TopUpTransaction : receives
+}
+
+' =========================
+' BILLER CATALOG
+' =========================
+
+package "Biller Catalog" {
+
+    class Biller {
+        billerId
+        name
+        status
+    }
+
+    class BillerService {
+        serviceId
+        name
+        description
+        minAmount
+        maxAmount
+        status
+    }
+
+    class ServiceInputField {
+        fieldId
+        fieldName
+        dataType
+        required
+        validationRule
+    }
+
+    Biller "1" *-- "1..*" BillerService : offers
+    BillerService "1" *-- "1..*" ServiceInputField : requires
+}
+
+' =========================
+' PAYMENT PROCESSING
+' =========================
+
+package "Payment Processing" {
+
+    abstract class MoneyMovement {
+        movementId
+        amount
+        createdAt
+    }
+
+    class BillInquiry {
+        inquiryId
+        customerReference
+        billAmount
+        inquiryDate
+        status
+    }
+
+    class Payment {
+        paymentId
+        reference
+        billAmount
+        feeAmount
+        totalAmount
+        status : PaymentStatus
+        idempotencyKey
+        createdAt
+        completedAt
+    }
+
+    class IdempotencyRecord {
+        recordId
+        key
+        originalResult
+        createdAt
+    }
+
+    class PaymentStatusHistory {
+        historyId
+        previousStatus
+        newStatus
+        changedAt
+        reason
+    }
+
+    class ProviderQueryAttempt {
+        attemptId
+        attemptNumber
+        attemptedAt
+        responseStatus
+        responseDetails
+    }
+
+    class ProviderCallback {
+        callbackId
+        externalEventId
+        receivedAt
+        status : CallbackStatus
+        payload
+    }
+
+    class RefundRequest {
+        refundId
+        reason
+        status : RefundStatus
+        requestedAt
+        reviewedAt
+    }
+
+    class RefundTransaction {
+        refundTransactionId
+        amount
+        completedAt
+    }
+
+    MoneyMovement <|-- Payment
+    MoneyMovement <|-- TopUpTransaction
+    MoneyMovement <|-- RefundTransaction
+
+    Customer "1" -- "0..*" BillInquiry : requests
+    BillerService "1" -- "0..*" BillInquiry : queried for
+
+    BillInquiry "0..1" -- "0..1" Payment : results in
+
+    User "1" <-- "0..*" Payment : initiated by
+    Customer "1" <-- "0..*" Payment : beneficiary
+    BillerService "1" -- "0..*" Payment : processes
+
+    Payment "1" -- "1" IdempotencyRecord : identified by
+    Payment "1" *-- "1..*" PaymentStatusHistory : status history
+
+    Payment "1" -- "0..1" WalletHold : reserves funds
+    Payment "1" -- "0..*" ProviderQueryAttempt : re-query attempts
+
+    TopUpTransaction "1" -- "0..*" ProviderCallback : receives callbacks
+
+    Customer "1" -- "0..*" RefundRequest : requests
+    Payment "1" -- "0..*" RefundRequest : refund requests
+    SupportEmployee "0..1" -- "0..*" RefundRequest : reviews
+
+    RefundRequest "1" -- "0..1" RefundTransaction : produces
+    RefundTransaction "0..*" --> "1" Payment : refunds
+}
+
+' =========================
+' FEES AND COMMISSIONS
+' =========================
+
+package "Fees and Commissions" {
+
+    class FeeRule {
+        feeRuleId
+        feeType : FeeType
+        value
+        effectiveFrom
+        effectiveTo
+        active
+    }
+
+    class FeeTier {
+        tierId
+        minimumAmount
+        maximumAmount
+        feeValue
+    }
+
+    class PromotionPeriod {
+        promotionId
+        startDate
+        endDate
+        discountValue
+        active
+    }
+
+    class AgentCommission {
+        commissionId
+        amount
+        createdAt
+        status
+    }
+
+    BillerService "1" -- "0..*" FeeRule : has rules
+    FeeRule "1" *-- "0..*" FeeTier : contains
+    FeeRule "1" -- "0..*" PromotionPeriod : has promotions
+
+    Payment "0..*" --> "1" FeeRule : uses
+
+    Payment "1" -- "0..1" AgentCommission : generates
+    Agent "1" -- "0..*" AgentCommission : earns
+}
+
+' =========================
+' FRAUD AND LIMITS
+' =========================
+
+package "Fraud and Limits" {
+
+    class LimitConfiguration {
+        limitId
+        verificationLevel : VerificationLevel
+        singlePaymentLimit
+        dailyLimit
+        active
+    }
+
+    class AccountBlock {
+        blockId
+        source : BlockSource
+        reason
+        blockedAt
+        expiresAt
+        active
+    }
+
+    Customer "1" -- "0..*" AccountBlock : has
+    SupportEmployee "0..1" -- "0..*" AccountBlock : manages
+}
+
+' =========================
+' NOTIFICATIONS
+' =========================
+
+package "Notifications" {
+
+    class Notification {
+        notificationId
+        channel : NotificationChannel
+        message
+        status : NotificationStatus
+        retryCount
+        createdAt
+        sentAt
+    }
+
+    class NotificationAttempt {
+        attemptId
+        attemptNumber
+        attemptedAt
+        status : AttemptStatus
+        errorMessage
+    }
+
+    class MessageTemplate {
+        templateId
+        eventType
+        content
+    }
+
+    Customer "1" -- "0..*" Notification : receives
+    Payment "0..1" -- "0..*" Notification : triggers
+
+    Notification "*" -- "1" MessageTemplate : uses
+    Notification "1" *-- "0..*" NotificationAttempt : attempts
+}
+
+' =========================
+' AUDIT AND RECONCILIATION
+' =========================
+
+package "Audit and Reconciliation" {
+
+    class AuditRecord {
+        auditId
+        action
+        targetReference
+        details
+        timestamp
+    }
+
+    class ReconciliationRun {
+        runId
+        runDate
+        status
+        generatedAt
+    }
+
+    class SettlementRecord {
+        settlementId
+        externalReference
+        amount
+        settlementDate
+    }
+
+    class ReconciliationDifference {
+        differenceId
+        expectedAmount
+        actualAmount
+        description
+        status : ReconciliationStatus
+    }
+
+    User "0..1" -- "0..*" AuditRecord : performs
+    MoneyMovement "0..1" -- "0..*" AuditRecord : audited by
+
+    ReconciliationRun "1" *-- "0..*" SettlementRecord : contains
+    ReconciliationRun "1" *-- "0..*" ReconciliationDifference : reports
+
+    Biller "1" -- "0..*" SettlementRecord : provides
+    SettlementRecord "0..1" -- "0..1" Payment : matches
+}
+
+' =========================
+' DAILY REPORTING
+' =========================
+
+package "Daily Reporting" {
+
+    class DailyReport {
+        reportId
+        reportDate
+        totalPayments
+        totalFeesEarned
+        totalCommissionsPaid
+        totalFailures
+        generatedAt
+    }
+
+    class DailyReportLine {
+        lineId
+        billerName
+        paymentCount
+        failedPaymentCount
+        feesEarned
+    }
+
+    DailyReport "1" *-- "1..*" DailyReportLine : contains
+    Biller "1" -- "0..*" DailyReportLine : summarized for
+}
+
+' =========================
+' ADMIN MANAGEMENT
+' =========================
+
+Admin "1" -- "0..*" Biller : manages
+Admin "1" -- "0..*" FeeRule : configures
+Admin "1" -- "0..*" LimitConfiguration : configures
+
+@enduml

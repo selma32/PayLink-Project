@@ -1054,7 +1054,7 @@ system: requirements, design diagrams, and the Docker and CI foundation.
 | NFR-2 | Performance | The system sustains 100 payments per second for 1 minute against the mock billers | Load test, with the result shown in the final report |
 | NFR-3 | Resilience | When one biller is down or slow, payments to the other billers still complete | Automated test with one mock biller switched off or delayed |
 | NFR-4 | Modifiability | Adding a new biller changes only the Biller Integration module and configuration | Compare the changed files in the pull request (hard case 8) |
-| NFR-5 | Auditability | 100% of money movements have an audit record that shows who, when and why | Test that compares the number of ledger entries with the number of audit records |
+| NFR-5 | Auditability | 100% of money movements have an audit record that shows who, when and why | Test that compare distinct transaction_id values with audit records. |
 | NFR-6 | Testability | At least 70% line coverage on domain logic | Coverage report produced by the CI pipeline |
 
 ### Priorities
@@ -1091,6 +1091,8 @@ Decision: Yes, it counts toward the limit. No, it does not take money from the a
 
 **Q6. Does a hold create one ledger entry or two? (US-5)**\
 Decision: Two entries that share a transaction ID, written in one database transaction.
+**Q6.1 How many ledger entries does a money movement create?**\
+Decision: As many as the movement needs, all with the same transaction_id.
 
 **Q7. Can a disabled biller be re-enabled? (US-6)**\
 Decision: Yes.
@@ -1111,7 +1113,7 @@ Decision: Use the 10-second timeout. The customer retries a failed inquiry manua
 Decision: Hold the full amount including the fee, after checking the available balance again.
 
 **Q13. What is the scope and retention period of an idempotency key, and can it be reused if the original request failed before a payment was created? (US-10)**\
-Decision: Keys are unique per customer and endpoint. A key can be reused if no payment was created.
+Decision: Keys are unique per customer and endpoint. A key can be reused if no payment was created.Rejected payment uses up its idempotency key, so a new attempt needs a new key.
 
 **Q14. What error should be returned for a refused state transition, and should repeated transitions to the same state or manual support transitions be allowed? (US-11)**\
 Decision: Return an invalid-transition error and ignore duplicate transitions. Manual transitions by support are not allowed.
